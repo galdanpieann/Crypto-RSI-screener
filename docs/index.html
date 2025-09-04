@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Crypto RSI Screener — Binance USDT Perpetuals</title>
+  <title>Crypto RSI MTF Screener — H4 crosses mapped to D1</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root {
@@ -37,27 +37,27 @@
   </style>
 </head>
 <body>
-  <h1>Crypto RSI Screener — Binance USDT Perpetuals</h1>
+  <h1>Crypto RSI MTF Screener — H4 crosses mapped to D1</h1>
   <div class="sub">
-    - Source: Close price. Uses only completed candles. Crosses tracked at RSI 30 / 50 / 70 on the latest closed bar.
+    RSI length: 14 (source: close). Multi-timeframe: detect H4 RSI crosses (30 / 50 / 70) that occurred during the last closed D1 candle, and report them on the daily row (daily close).
   </div>
 
   <div class="panel" style="margin-bottom:14px">
     <div class="row">
       <div class="ctrl">
-        <label for="tf">Timeframe</label>
-        <select id="tf">
-          <option value="1d" selected>1 Day</option>
-          <option value="4h">4 Hours</option>
+        <label for="mode">Mode</label>
+        <select id="mode" title="Choose how crosses are computed">
+          <option value="h4_in_d1" selected>H4 RSI crosses → mapped to D1 day</option>
+          <option value="d1_only">D1 RSI crosses (no MTF)</option>
         </select>
       </div>
-      <div class="ctrl">
+      <div class="ctrl" title="RSI period (length) in candles">
         <label for="period">RSI Length</label>
         <input id="period" type="number" value="14" min="2" max="100" step="1" />
       </div>
       <div class="ctrl">
         <input type="checkbox" id="onlyCrosses" />
-        <label for="onlyCrosses">Only show rows with a 30/50/70 cross on the last bar</label>
+        <label for="onlyCrosses">Only show symbols with a cross in the selected mode</label>
       </div>
       <div class="ctrl">
         <label for="mcap">Min Market Cap</label>
@@ -69,7 +69,7 @@
           <option value="0">No filter</option>
         </select>
       </div>
-      <div class="ctrl">
+      <div class="ctrl" title="Limit how many rows are displayed (does not change how many markets are scanned)">
         <label for="limit">Max Rows</label>
         <select id="limit">
           <option>50</option>
@@ -82,7 +82,7 @@
       <span id="status" class="loading">Idle</span>
     </div>
     <div class="note">
-      Tip: Max Rows limits the number of results displayed after sorting/filtering. It does not reduce how many markets are scanned.
+      Mode “H4 RSI crosses → mapped to D1 day”: Uses 4h candles to detect RSI(14) level crossings inside the last fully closed daily candle. The RSI value shown is RSI(14) on D1 (daily close).
     </div>
   </div>
 
@@ -91,15 +91,15 @@
       <thead>
         <tr>
           <th data-key="symbol">Symbol</th>
-          <th id="thRsi" data-key="rsi" data-num>RSI</th>
+          <th id="thRsi" data-key="rsi" data-num>RSI(14) D1</th>
           <th data-key="close" data-num>Last Close</th>
           <th data-key="chg" data-num>24h</th>
           <th data-key="mcap" data-num>Market Cap</th>
-          <th data-key="time" data-num>Last Close Time</th>
+          <th data-key="time" data-num>Daily Close Time</th>
           <th data-key="crossScore" data-num>Cross 30</th>
           <th data-key="crossScore" data-num>Cross 50</th>
           <th data-key="crossScore" data-num>Cross 70</th>
-          <th>Sparkline</th>
+          <th>Sparkline (D1)</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -120,7 +120,6 @@
     const fmtPct = n => (n == null || isNaN(n) ? "-" : (n >= 0 ? "+" : "") + n.toFixed(2) + "%");
     const utcDateTime = ms => new Date(ms).toISOString().replace("T", " ").replace(/\..+/, " UTC");
 
-    // Basic sparkline
     function drawSpark(canvas, arr) {
       const ctx = canvas.getContext("2d");
       const w = canvas.width = canvas.clientWidth;
@@ -145,28 +144,50 @@
       ctx.stroke();
     }
 
-    // RSI calculation (source: close)
+    // Simple moving-average RSI (source: close) for a single point
     function rsiAt(closes, endIndexExclusive, period = 14) {
       if (!closes || endIndexExclusive < period + 1) return null;
       const recent = closes.slice(endIndexExclusive - (period + 1), endIndexExclusive);
       let gains = 0, losses = 0;
       for (let i = 0; i < period; i++) {
         const diff = recent[i+1] - recent[i];
-        if (diff > 0) gains += diff;
-        else losses -= diff;
+        if (diff > 0) gains += diff; else losses -= diff;
       }
       const avgGain = gains / period;
       const avgLoss = losses / period;
+      if (avgLoss === 0 && avgGain === 0) return 50;
       if (avgLoss === 0) return 100;
       const rs = avgGain / avgLoss;
       return 100 - (100 / (1 + rs));
     }
 
-    function rsiPair(closes, period = 14) {
+    // Sliding-window RSI series (same simple method, efficient)
+    function rsiSeries(closes, period = 14) {
       const N = closes.length;
-      const curr = rsiAt(closes, N, period);
-      const prev = rsiAt(closes, N - 1, period);
-      return { prev, curr };
+      const out = new Array(N).fill(null);
+      if (N < period + 1) return out;
+      const diffs = new Array(N - 1);
+      for (let i = 0; i < N - 1; i++) diffs[i] = closes[i+1] - closes[i];
+      let g = 0, l = 0;
+      for (let k = 0; k < period; k++) {
+        const d = diffs[k];
+        if (d > 0) g += d; else l -= d;
+      }
+      const setRsi = (j) => {
+        const avgG = g / period;
+        const avgL = l / period;
+        out[j] = avgL === 0 && avgG === 0 ? 50 : (avgL === 0 ? 100 : (100 - (100 / (1 + (avgG / avgL)))));
+      };
+      // RSI at index = period corresponds to window diffs[0..period-1] -> closes[0..period]
+      setRsi(period);
+      for (let j = period + 1; j < N; j++) {
+        const oldD = diffs[j - period - 1];
+        const newD = diffs[j - 1];
+        if (oldD > 0) g -= oldD; else l += oldD; // oldD negative -> losses subtracting becomes adding negative
+        if (newD > 0) g += newD; else l -= newD;
+        setRsi(j);
+      }
+      return out;
     }
 
     function crossDir(prev, curr, level) {
@@ -176,7 +197,6 @@
       return null;
     }
 
-    // Fetch helpers with backoff
     async function fetchJson(url, init={}, tries=3, retryDelay=600) {
       for (let t=0; t<tries; t++) {
         try {
@@ -190,21 +210,18 @@
       }
     }
 
-    // Symbols from Binance Perp USDT
     async function getBinancePerpUSDT() {
       const info = await fetchJson("https://fapi.binance.com/fapi/v1/exchangeInfo");
       const syms = info.symbols
         .filter(s => s.contractType === "PERPETUAL" && s.quoteAsset === "USDT" && s.status === "TRADING")
         .map(s => ({ symbol: s.symbol, base: s.baseAsset, quote: s.quoteAsset }));
-      // Exclude leveraged tokens etc.
       const bad = /UP|DOWN|BULL|BEAR|[0-9]{3,}|HALF|HEDGE|ETHFI0|TEST|DOM/i;
       return syms.filter(s => !bad.test(s.base));
     }
 
-    // CoinGecko market caps map by uppercase symbol
     async function getCoinGeckoMcaps(minUSDm = 200) {
       const minCap = minUSDm * 1e6;
-      const pages = [1, 2, 3]; // top 750
+      const pages = [1, 2, 3];
       const results = [];
       for (const p of pages) {
         const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${p}&price_change_percentage=24h`;
@@ -228,22 +245,14 @@
       };
     }
 
-    // Generic klines
-    async function getKlines(symbol, interval="1d", limit=120) {
+    async function getKlines(symbol, interval="1d", limit=200) {
       const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
       const rows = await fetchJson(url);
       return rows.map(r => ({
-        openTime: r[0],
-        open: +r[1],
-        high: +r[2],
-        low: +r[3],
-        close: +r[4],
-        volume: +r[5],
-        closeTime: r[6]
+        openTime: r[0], open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5], closeTime: r[6]
       }));
     }
 
-    // Simple promise pool
     async function pool(items, limit, worker) {
       const ret = [];
       let i = 0, active = 0;
@@ -263,7 +272,6 @@
       });
     }
 
-    // Sorting
     let sortKey = "rsi";
     let sortAsc = false;
     function applySort(rows) {
@@ -292,10 +300,9 @@
       const mcapSel = document.getElementById("mcap");
       const limitSel = document.getElementById("limit");
       const onlyCrossesEl = document.getElementById("onlyCrosses");
-      const tf = document.getElementById("tf").value;
+      const mode = document.getElementById("mode").value;
       const period = Math.max(2, Math.min(100, Number(document.getElementById("period").value || 14)));
-
-      document.getElementById("thRsi").textContent = `RSI(${period})`;
+      document.getElementById("thRsi").textContent = `RSI(${period}) D1`;
 
       const minUSDm = Number(mcapSel.value);
       const maxRows = Number(limitSel.value);
@@ -307,43 +314,98 @@
       const mcap = await getCoinGeckoMcaps(minUSDm);
 
       const candidates = binanceSyms.filter(s => mcap.pass(s.base));
-      status.textContent = `Fetching ${tf} klines for ${candidates.length} symbols …`;
-
-      const klineLimit = tf === "1d" ? 200 : 400; // plenty for RSI(14)
-      const klinesAll = await pool(candidates, 6, async s => {
-        const kl = await getKlines(s.symbol, tf, klineLimit);
-        return { s, kl };
-      });
+      status.textContent = `Fetching data for ${candidates.length} symbols …`;
 
       const rows = [];
-      for (const item of klinesAll) {
-        if (!item || item.error || !item.kl || item.kl.length < (period + 2)) continue;
-        const closes = item.kl.map(k => k.close);
-        const { prev: rsiPrev, curr: rsiCurr } = rsiPair(closes, period);
-        const last = item.kl[item.kl.length - 1];
-        const prev = item.kl[item.kl.length - 2];
-        const spark = closes.slice(-30);
 
-        const cross30 = crossDir(rsiPrev, rsiCurr, 30);
-        const cross50 = crossDir(rsiPrev, rsiCurr, 50);
-        const cross70 = crossDir(rsiPrev, rsiCurr, 70);
-
-        rows.push({
-          symbol: item.s.symbol,
-          base: item.s.base,
-          rsi: rsiCurr,
-          rsiPrev,
-          cross30, cross50, cross70,
-          crossScore: ((cross30?1:0) + (cross50?1:0) + (cross70?1:0)),
-          close: last.close,
-          prevClose: prev.close,
-          chg: ((last.close - prev.close) / prev.close) * 100,
-          time: last.closeTime,
-          spark
+      if (mode === "d1_only") {
+        const results = await pool(candidates, 5, async s => {
+          const d1 = await getKlines(s.symbol, "1d", 220);
+          return { s, d1 };
         });
+
+        for (const item of results) {
+          if (!item || item.error || !item.d1 || item.d1.length < period + 2) continue;
+          const closesD1 = item.d1.map(k => k.close);
+          const rsiPrev = rsiAt(closesD1, closesD1.length - 1, period);
+          const rsiCurr = rsiAt(closesD1, closesD1.length, period);
+          const last = item.d1[item.d1.length - 1];
+          const prev = item.d1[item.d1.length - 2];
+          const cross30 = crossDir(rsiPrev, rsiCurr, 30);
+          const cross50 = crossDir(rsiPrev, rsiCurr, 50);
+          const cross70 = crossDir(rsiPrev, rsiCurr, 70);
+          rows.push({
+            symbol: item.s.symbol,
+            base: item.s.base,
+            rsi: rsiCurr,
+            rsiPrev,
+            close: last.close,
+            prevClose: prev.close,
+            chg: ((last.close - prev.close) / prev.close) * 100,
+            time: last.closeTime,
+            spark: closesD1.slice(-30),
+            cross30, cross50, cross70,
+            crossScore: ((cross30?1:0)+(cross50?1:0)+(cross70?1:0))
+          });
+        }
+      } else {
+        const results = await pool(candidates, 4, async s => {
+          const [d1, h4] = await Promise.all([
+            getKlines(s.symbol, "1d", 220),
+            getKlines(s.symbol, "4h", 480)
+          ]);
+          return { s, d1, h4 };
+        });
+
+        for (const item of results) {
+          if (!item || item.error || !item.d1 || item.d1.length < 3 || !item.h4 || item.h4.length < period + 2) continue;
+
+          // Last fully closed D1 day
+          const lastDay = item.d1[item.d1.length - 1];
+          const prevDay = item.d1[item.d1.length - 2];
+          const dayOpen = prevDay.closeTime;       // previous D1 close time == current D1 open
+          const dayClose = lastDay.closeTime;      // last closed daily close time
+
+          // D1 RSI value for display
+          const closesD1 = item.d1.map(k => k.close);
+          const rsiD1 = rsiAt(closesD1, closesD1.length, period);
+
+          // H4 RSI series
+          const closesH4 = item.h4.map(k => k.close);
+          const rsiH4 = rsiSeries(closesH4, period);
+
+          // Scan H4 bars inside last closed D1 day for any level cross
+          let cross30 = null, cross50 = null, cross70 = null;
+          for (let i = 1; i < item.h4.length; i++) {
+            const prevBar = item.h4[i-1];
+            const currBar = item.h4[i];
+            if (!(currBar.closeTime > dayOpen && currBar.closeTime <= dayClose)) continue;
+            const p = rsiH4[i-1], c = rsiH4[i];
+            const d30 = crossDir(p, c, 30);
+            const d50 = crossDir(p, c, 50);
+            const d70 = crossDir(p, c, 70);
+            if (d30) cross30 = d30; // keep latest cross within the day
+            if (d50) cross50 = d50;
+            if (d70) cross70 = d70;
+          }
+
+          rows.push({
+            symbol: item.s.symbol,
+            base: item.s.base,
+            rsi: rsiD1,                 // display D1 RSI(14) at daily close
+            rsiPrev: rsiAt(closesD1, closesD1.length - 1, period),
+            close: lastDay.close,
+            prevClose: prevDay.close,
+            chg: ((lastDay.close - prevDay.close) / prevDay.close) * 100,
+            time: lastDay.closeTime,
+            spark: closesD1.slice(-30),
+            cross30, cross50, cross70,
+            crossScore: ((cross30?1:0)+(cross50?1:0)+(cross70?1:0))
+          });
+        }
       }
 
-      // Enrich with CoinGecko market caps and 24h change (chg column)
+      // Enrich with CoinGecko market caps and 24h change if available
       for (const r of rows) {
         const cg = mcap.map.get(r.base.toUpperCase());
         r.mcap = cg ? cg.market_cap : null;
@@ -361,6 +423,7 @@
       applySort(filtered);
       const limited = filtered.slice(0, maxRows);
 
+      const tbody = document.querySelector("#tbl tbody");
       tbody.innerHTML = "";
       for (const r of limited) {
         const tr = document.createElement("tr");
@@ -393,11 +456,11 @@
       }
 
       document.getElementById("count").textContent =
-        `Showing ${limited.length} of ${filtered.length} matches (scanned ${candidates.length} candidates) on ${tf}, RSI(${period}).`;
+        `Showing ${limited.length} of ${filtered.length} matches (scanned ${candidates.length}). Mode: ${mode === "h4_in_d1" ? "H4→D1" : "D1 only"}, RSI(${period}).`;
       status.textContent = `Done at ${utcDateTime(Date.now())}`;
     }
 
-    // Sort headers
+    // Sorting handlers
     document.querySelectorAll("#tbl thead th").forEach(th => {
       th.addEventListener("click", () => {
         const key = th.getAttribute("data-key");
@@ -410,7 +473,6 @@
       });
     });
 
-    // Calculate button (explicit compute)
     document.getElementById("calc").addEventListener("click", () => {
       document.getElementById("status").textContent = "Calculating…";
       run().catch(e => {
@@ -418,8 +480,7 @@
       });
     });
 
-    // Initial note
-    document.getElementById("status").textContent = "Choose timeframe/RSI length and click Calculate";
+    document.getElementById("status").textContent = "Choose mode and click Calculate";
   </script>
 </body>
 </html>
