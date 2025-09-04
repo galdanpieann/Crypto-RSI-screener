@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Crypto RSI(4) Screener — Binance USDT Perpetuals</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #151924; --text: #e6e6e6; --muted: #a0a7b4;
+      --accent: #3ea6ff; --good: #2bb673; --bad: #e5534b; --warn: #ffbf3f;
+      --chip: #0e121b; --chip-b: #2a2f3a;
+    }
+    body { background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif; margin: 0; padding: 24px; }
+    h1 { margin: 0 0 8px; font-size: 20px; }
+    .sub { color: var(--muted); margin-bottom: 16px; font-size: 13px; }
+    .panel { background: var(--panel); border-radius: 10px; padding: 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .ctrl { display: inline-flex; gap: 8px; align-items: center; background: var(--chip); border: 1px solid var(--chip-b); padding: 8px 10px; border-radius: 8px; }
+    select, input[type="checkbox"] { accent-color: var(--accent); }
+    select, input[type="text"] { background: var(--chip); color: var(--text); border: 1px solid var(--chip-b); border-radius: 6px; padding: 6px 8px; outline: none; }
+    button { background: var(--accent); border: none; color: #061018; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th { text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid #2a2f3a; padding: 10px 8px; cursor: pointer; user-select: none; white-space: nowrap; }
+    tbody td { border-bottom: 1px solid #202533; padding: 10px 8px; vertical-align: middle; white-space: nowrap; }
+    .mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .tag { font-size: 11px; color: #0b141a; background: #9ad3ff; padding: 2px 6px; border-radius: 999px; }
+    .green { color: var(--good); } .red { color: var(--bad); } .yellow { color: var(--warn); }
+    .spark { width: 120px; height: 28px; }
+    .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+    .loading { color: var(--muted); }
+    .chip { background: var(--chip); border: 1px solid var(--chip-b); padding: 4px 8px; border-radius: 999px; color: var(--muted); font-size: 12px; }
+    a { color: #7ec9ff; text-decoration: none; } a:hover { text-decoration: underline; }
+    .status { display: inline-block; min-width: 12px; min-height: 12px; border-radius: 999px; }
+    .legend { display: inline-flex; gap: 10px; align-items: center; font-size: 12px; color: var(--muted); }
+    .pill { border: 1px solid var(--chip-b); background: var(--chip); border-radius: 6px; padding: 2px 6px; font-size: 11px; }
+    .up { color: var(--good); } .down { color: var(--bad); }
+  </style>
+</head>
+<body>
+  <h1>Crypto RSI(4) Screener — Binance USDT Perpetuals</h1>
+  <div class="sub">
+    1D timeframe, last 4 fully closed candles. Market cap filter ≥ $200M (CoinGecko).
+    <div class="legend" style="margin-top:6px">
+      <span>RSI bands:</span>
+      <span class="chip">Oversold ≤ 30</span>
+      <span class="chip">Neutral 30–70</span>
+      <span class="chip">Overbought ≥ 70</span>
+      <span class="chip">Crosses tracked: 30 / 50 / 70</span>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:14px">
+    <div class="row">
+      <div class="ctrl">
+        <label for="mcap">Min Market Cap</label>
+        <select id="mcap">
+          <option value="200">≥ $200M</option>
+          <option value="500">≥ $500M</option>
+          <option value="1000">≥ $1B</option>
+          <option value="5">≥ $5M</option>
+          <option value="0">No filter</option>
+        </select>
+      </div>
+      <div class="ctrl">
+        <label for="limit">Max Rows</label>
+        <select id="limit">
+          <option>50</option>
+          <option selected>100</option>
+          <option>200</option>
+          <option>500</option>
+        </select>
+      </div>
+      <div class="ctrl">
+        <label>RSI Period</label>
+        <span class="chip">4</span>
+      </div>
+      <div class="ctrl">
+        <input type="checkbox" id="onlyCrosses" />
+        <label for="onlyCrosses">Only show rows with a 30/50/70 cross today</label>
+      </div>
+      <button id="refresh">Refresh</button>
+      <span id="status" class="loading">Loading…</span>
+    </div>
+    <div class="note">
+      Data: Binance USDⓈ-M Perpetual (1d klines) and CoinGecko market caps. Times shown in UTC. Uses only completed daily candles.
+    </div>
+  </div>
+
+  <div class="panel">
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th data-key="symbol">Symbol</th>
+          <th data-key="rsi" data-num>RSI(4)</th>
+          <th data-key="close" data-num>Last Close</th>
+          <th data-key="chg" data-num>24h</th>
+          <th data-key="mcap" data-num>Market Cap</th>
+          <th data-key="time" data-num>Last Close Time</th>
+          <th data-key="crossScore" data-num>Cross 30</th>
+          <th data-key="crossScore" data-num>Cross 50</th>
+          <th data-key="crossScore" data-num>Cross 70</th>
+          <th>Sparkline</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div class="note" id="count"></div>
+  </div>
+
+  <script>
+    const fmtUSD = n => {
+      if (n == null || isNaN(n)) return "-";
+      if (n >= 1e12) return "$" + (n/1e12).toFixed(2) + "T";
+      if (n >= 1e9) return "$" + (n/1e9).toFixed(2) + "B";
+      if (n >= 1e6) return "$" + (n/1e6).toFixed(2) + "M";
+      if (n >= 1e3) return "$" + (n/1e3).toFixed(2) + "K";
+      return "$" + n.toFixed(2);
+    };
+    const fmtNum = n => (n == null || isNaN(n) ? "-" : n.toLocaleString(undefined, {maximumFractionDigits: 6}));
+    const fmtPct = n => (n == null || isNaN(n) ? "-" : (n >= 0 ? "+" : "") + n.toFixed(2) + "%");
+    const utcDateTime = ms => new Date(ms).toISOString().replace("T", " ").replace(/\..+/, " UTC");
+
+    // Basic sparkline
+    function drawSpark(canvas, arr) {
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width = canvas.clientWidth;
+      const h = canvas.height = canvas.clientHeight;
+      ctx.clearRect(0,0,w,h);
+      if (!arr || arr.length < 2) return;
+      const min = Math.min(...arr);
+      const max = Math.max(...arr);
+      const norm = v => (h - 2) - ((v - min) / (max - min || 1)) * (h - 4);
+      ctx.lineWidth = 2;
+      const grad = ctx.createLinearGradient(0,0,w,0);
+      const lastUp = arr[arr.length - 1] >= arr[0];
+      grad.addColorStop(0, lastUp ? "#46d990" : "#ff7e7e");
+      grad.addColorStop(1, lastUp ? "#12a66d" : "#d34242");
+      ctx.strokeStyle = grad;
+      ctx.beginPath();
+      arr.forEach((v, i) => {
+        const x = (i/(arr.length-1)) * (w-4) + 2;
+        const y = norm(v);
+        if (i === 0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      });
+      ctx.stroke();
+    }
+
+    // RSI(4) at specific end index (exclusive)
+    function rsiAt(closes, endIndexExclusive, period = 4) {
+      // Need period+1 closes ending at endIndexExclusive-1
+      if (!closes || endIndexExclusive < period + 1) return null;
+      const recent = closes.slice(endIndexExclusive - (period + 1), endIndexExclusive);
+      let gains = 0, losses = 0;
+      for (let i = 0; i < period; i++) {
+        const diff = recent[i+1] - recent[i];
+        if (diff > 0) gains += diff;
+        else losses -= diff;
+      }
+      const avgGain = gains / period;
+      const avgLoss = losses / period;
+      if (avgLoss === 0) return 100;
+      const rs = avgGain / avgLoss;
+      return 100 - (100 / (1 + rs));
+    }
+
+    function rsiPair(closes, period = 4) {
+      const N = closes.length;
+      const curr = rsiAt(closes, N, period);
+      const prev = rsiAt(closes, N - 1, period);
+      return { prev, curr };
+    }
+
+    function crossDir(prev, curr, level) {
+      if (prev == null || curr == null) return null;
+      if (prev < level && curr >= level) return "up";
+      if (prev > level && curr <= level) return "down";
+      return null;
+    }
+
+    // Fetch helpers with backoff
+    async function fetchJson(url, init={}, tries=3, retryDelay=600) {
+      for (let t=0; t<tries; t++) {
+        try {
+          const r = await fetch(url, init);
+          if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()));
+          return await r.json();
+        } catch (e) {
+          if (t === tries-1) throw e;
+          await new Promise(res => setTimeout(res, retryDelay * (t+1)));
+        }
+      }
+    }
+
+    // Get USDⓈ-M perpetual USDT symbols from Binance Futures
+    async function getBinancePerpUSDT() {
+      const info = await fetchJson("https://fapi.binance.com/fapi/v1/exchangeInfo");
+      const syms = info.symbols
+        .filter(s => s.contractType === "PERPETUAL" && s.quoteAsset === "USDT" && s.status === "TRADING")
+        .map(s => ({ symbol: s.symbol, base: s.baseAsset, quote: s.quoteAsset }));
+      // Filter leveraged tokens and odd multipliers
+      const bad = /UP|DOWN|BULL|BEAR|[0-9]{3,}|HALF|HEDGE|ETHFI0|TEST|DOM/i;
+      return syms.filter(s => !bad.test(s.base));
+    }
+
+    // CoinGecko market caps map by uppercase symbol
+    async function getCoinGeckoMcaps(minUSDm = 200) {
+      const minCap = minUSDm * 1e6;
+      const pages = [1, 2, 3]; // top 750
+      const results = [];
+      for (const p of pages) {
+        const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${p}&price_change_percentage=24h`;
+        results.push(...await fetchJson(url));
+      }
+      const map = new Map();
+      for (const c of results) {
+        if (!c.symbol || c.market_cap == null) continue;
+        const key = String(c.symbol).toUpperCase();
+        const prev = map.get(key);
+        if (!prev || (c.market_cap || 0) > (prev.market_cap || 0)) {
+          map.set(key, c);
+        }
+      }
+      return {
+        map,
+        pass: sym => {
+          const it = map.get(String(sym).toUpperCase());
+          return it && (it.market_cap || 0) >= minCap;
+        }
+      };
+    }
+
+    // Get last N daily klines (closed candles)
+    async function getDailyKlines(symbol, limit=120) {
+      const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=1d&limit=${limit}`;
+      const rows = await fetchJson(url);
+      return rows.map(r => ({
+        openTime: r[0],
+        open: +r[1],
+        high: +r[2],
+        low: +r[3],
+        close: +r[4],
+        volume: +r[5],
+        closeTime: r[6]
+      }));
+    }
+
+    // Promise pool to limit concurrency
+    async function pool(items, limit, worker) {
+      const ret = [];
+      let i = 0, active = 0;
+      return new Promise((resolve, reject) => {
+        const next = () => {
+          if (i >= items.length && active === 0) return resolve(ret);
+          while (active < limit && i < items.length) {
+            const idx = i++;
+            active++;
+            Promise.resolve(worker(items[idx], idx))
+              .then(v => (ret[idx] = v))
+              .catch(e => (ret[idx] = { error: String(e) }))
+              .finally(() => { active--; next(); });
+          }
+        };
+        next();
+      });
+    }
+
+    // Sorting
+    let sortKey = "rsi";
+    let sortAsc = false;
+    function applySort(rows) {
+      const key = sortKey;
+      const asc = sortAsc ? 1 : -1;
+      rows.sort((a,b) => {
+        const va = a[key], vb = b[key];
+        if (va == null && vb == null) return 0;
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        if (typeof va === "number" && typeof vb === "number") return asc * (va - vb);
+        return asc * String(va).localeCompare(String(vb));
+      });
+    }
+
+    function renderCrossCell(dir, level) {
+      if (!dir) return `<span class="pill">—</span>`;
+      const arrow = dir === "up" ? "↑" : "↓";
+      const cls = dir === "up" ? "up" : "down";
+      return `<span class="pill ${cls}" title="RSI ${dir} cross ${level}">${arrow} ${level}</span>`;
+    }
+
+    async function run() {
+      const status = document.getElementById("status");
+      const tbody = document.querySelector("#tbl tbody");
+      const mcapSel = document.getElementById("mcap");
+      const limitSel = document.getElementById("limit");
+      const onlyCrosses = document.getElementById("onlyCrosses").checked;
+
+      const minUSDm = Number(mcapSel.value);
+      const maxRows = Number(limitSel.value);
+
+      status.textContent = "Loading symbols …";
+      const binanceSyms = await getBinancePerpUSDT();
+
+      status.textContent = `Loading market caps …`;
+      const mcap = await getCoinGeckoMcaps(minUSDm);
+
+      // Filter by market cap (by base asset symbol)
+      const candidates = binanceSyms.filter(s => mcap.pass(s.base));
+      status.textContent = `Fetching klines for ${candidates.length} symbols …`;
+
+      const klinesAll = await pool(candidates, 6, async s => {
+        const kl = await getDailyKlines(s.symbol, 120);
+        return { s, kl };
+      });
+
+      const rows = [];
+      for (const item of klinesAll) {
+        if (!item || item.error || !item.kl || item.kl.length < 7) continue;
+        const closes = item.kl.map(k => k.close);
+        const { prev: rsiPrev, curr: rsiCurr } = rsiPair(closes, 4);
+        const last = item.kl[item.kl.length - 1];
+        const prev = item.kl[item.kl.length - 2];
+        const spark = closes.slice(-30);
+
+        const cross30 = crossDir(rsiPrev, rsiCurr, 30);
+        const cross50 = crossDir(rsiPrev, rsiCurr, 50);
+        const cross70 = crossDir(rsiPrev, rsiCurr, 70);
+
+        rows.push({
+          symbol: item.s.symbol,
+          base: item.s.base,
+          rsi: rsiCurr,
+          rsiPrev,
+          cross30, cross50, cross70,
+          crossScore: ((cross30?1:0) + (cross50?1:0) + (cross70?1:0)),
+          close: last.close,
+          prevClose: prev.close,
+          chg: ((last.close - prev.close) / prev.close) * 100,
+          time: last.closeTime,
+          spark
+        });
+      }
+
+      // Enrich with CoinGecko market caps and 24h change
+      for (const r of rows) {
+        const cg = mcap.map.get(r.base.toUpperCase());
+        r.mcap = cg ? cg.market_cap : null;
+        if (cg && typeof cg.price_change_percentage_24h === "number") {
+          r.chg = cg.price_change_percentage_24h;
+        }
+      }
+
+      const minCapAbs = minUSDm * 1e6;
+      let filtered = rows.filter(r => (r.mcap || 0) >= minCapAbs);
+      if (onlyCrosses) {
+        filtered = filtered.filter(r => r.cross30 || r.cross50 || r.cross70);
+      }
+
+      applySort(filtered);
+      const limited = filtered.slice(0, maxRows);
+
+      tbody.innerHTML = "";
+      for (const r of limited) {
+        const tr = document.createElement("tr");
+        const tvSym = `${r.base}USDT.P`;
+        const tvUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${encodeURIComponent(tvSym)}`;
+        const binUrl = `https://www.binance.com/en/futures/${encodeURIComponent(r.symbol)}`;
+        const rsiClass = r.rsi != null ? (r.rsi <= 30 ? "green" : r.rsi >= 70 ? "red" : "yellow") : "";
+        tr.innerHTML = `
+          <td>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="status" style="background:${r.chg >= 0 ? 'var(--good)' : 'var(--bad)'}"></span>
+              <a href="${binUrl}" target="_blank" rel="noopener">${r.symbol}</a>
+              <span class="tag">USDT.P</span>
+              <a href="${tvUrl}" target="_blank" rel="noopener" title="Open in TradingView">TV</a>
+            </div>
+          </td>
+          <td class="mono ${rsiClass}">${r.rsi == null ? "-" : r.rsi.toFixed(2)}</td>
+          <td class="mono">${fmtNum(r.close)}</td>
+          <td class="mono ${r.chg >= 0 ? 'green' : 'red'}">${fmtPct(r.chg)}</td>
+          <td class="mono">${fmtUSD(r.mcap)}</td>
+          <td class="mono">${utcDateTime(r.time)}</td>
+          <td>${renderCrossCell(r.cross30, 30)}</td>
+          <td>${renderCrossCell(r.cross50, 50)}</td>
+          <td>${renderCrossCell(r.cross70, 70)}</td>
+          <td><canvas class="spark"></canvas></td>
+        `;
+        tbody.appendChild(tr);
+        const canvas = tr.querySelector("canvas");
+        drawSpark(canvas, r.spark);
+      }
+
+      document.getElementById("count").textContent =
+        `Showing ${limited.length} of ${filtered.length} matches (scanned ${candidates.length} candidates).`;
+      status.textContent = `Done at ${utcDateTime(Date.now())}`;
+    }
+
+    // Sort headers
+    document.querySelectorAll("#tbl thead th").forEach(th => {
+      th.addEventListener("click", () => {
+        const key = th.getAttribute("data-key");
+        if (!key) return;
+        if (sortKey === key) sortAsc = !sortAsc;
+        else { sortKey = key; sortAsc = key === "symbol"; }
+        run().catch(e => {
+          const status = document.getElementById("status");
+          status.textContent = "Error: " + e.message;
+        });
+      });
+    });
+
+    document.getElementById("refresh").addEventListener("click", () => {
+      document.getElementById("status").textContent = "Refreshing…";
+      run().catch(e => {
+        document.getElementById("status").textContent = "Error: " + e.message;
+      });
+    });
+
+    document.getElementById("mcap").addEventListener("change", () => {
+      document.getElementById("status").textContent = "Updating…";
+      run().catch(e => {
+        document.getElementById("status").textContent = "Error: " + e.message;
+      });
+    });
+
+    document.getElementById("limit").addEventListener("change", () => {
+      document.getElementById("status").textContent = "Updating…";
+      run().catch(e => {
+        document.getElementById("status").textContent = "Error: " + e.message;
+      });
+    });
+
+    document.getElementById("onlyCrosses").addEventListener("change", () => {
+      document.getElementById("status").textContent = "Updating…";
+      run().catch(e => {
+        document.getElementById("status").textContent = "Error: " + e.message;
+      });
+    });
+
+    // Initial
+    run().catch(e => {
+      document.getElementById("status").textContent = "Error: " + e.message;
+    });
+  </script>
+</body>
+</html>
