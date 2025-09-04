@@ -424,7 +424,8 @@
       tbodyEl.innerHTML = "";
       for (const r of limited) {
         const tr = document.createElement("tr");
-        const tvSym = `${r.base}USDT.P`;
+        const base = r.base || (r.symbol.endsWith('USDT') ? r.symbol.slice(0, -4) : r.symbol);
+        const tvSym = `${base}USDT.P`;
         const tvUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${encodeURIComponent(tvSym)}`;
         const binUrl = `https://www.binance.com/en/futures/${encodeURIComponent(r.symbol)}`;
         const rsiClass = r.rsi != null ? (r.rsi <= 30 ? "green" : r.rsi >= 70 ? "red" : "yellow") : "";
@@ -432,9 +433,9 @@
           <td>
             <div style="display:flex;align-items:center;gap:8px;">
               <span class="status" style="background:${r.chg >= 0 ? 'var(--good)' : 'var(--bad)'}"></span>
-              <a href="${binUrl}" target="_blank" rel="noopener">${r.symbol}</a>
+              <a href="${tvUrl}" target="_blank" rel="noopener noreferrer">${r.symbol}</a>
               <span class="tag">USDT.P</span>
-              <a href="${tvUrl}" target="_blank" rel="noopener" title="Open in TradingView">TV</a>
+              <a href="${binUrl}" target="_blank" rel="noopener noreferrer" title="Open in Binance Futures">BN</a>
             </div>
           </td>
           <td class="mono ${rsiClass}">${r.rsi == null ? "-" : r.rsi.toFixed(2)}</td>
