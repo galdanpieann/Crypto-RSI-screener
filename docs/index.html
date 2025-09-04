@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Crypto RSI MTF Screener — 4h calculation sampled on D1 (last 4 closed days)</title>
+  <title>Crypto RSI MTF Screener — 4h calc sampled on D1 (last 4 closed days)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root {
@@ -40,7 +40,7 @@
 <body>
   <h1>Crypto RSI MTF Screener — 4h calc sampled on D1 (last 4 closed days)</h1>
   <div class="sub">
-    - RSI Length: 14 (source: close, fixed) • Calculation timeframe: 4 hours • Signals evaluated on D1 by sampling the last closed 4h candle of each day (TradingView “Wait for timeframe closes” behavior).<br />
+    - RSI Length: 14 (source: close, fixed) • Calculation timeframe: 4 hours • Signals evaluated on D1 by sampling the last closed 4h candle of each day (TradingView “Wait for timeframe closes” behavior, Wilder’s RSI).<br />
     - Shows RSI crosses (30 / 50 / 70) for the last 4 fully closed daily bars: D‑3, D‑2, D‑1, D‑0.
   </div>
 
@@ -52,7 +52,7 @@
       </div>
       <div class="ctrl">
         <label for="levelFilter">Level filter</label>
-        <select id="levelFilter" title="Choose a specific level to require, or Any">
+        <select id="levelFilter" title="Require a specific level or allow any">
           <option value="any" selected>Any (30/50/70)</option>
           <option value="30">30 only</option>
           <option value="50">50 only</option>
@@ -60,7 +60,7 @@
         </select>
       </div>
       <div class="ctrl">
-        <input type="checkbox" id="onlyCrosses" />
+        <input type="checkbox" id="onlyCrosses" checked />
         <label for="onlyCrosses">Only show symbols with a cross in the last 4 closed days</label>
       </div>
       <div class="ctrl">
@@ -73,20 +73,20 @@
           <option value="1000">≥ $1B</option>
         </select>
       </div>
-      <div class="ctrl" title="Limits displayed rows only (sorting still applies)">
+      <div class="ctrl" title="Limits displayed rows only">
         <label for="limit">Max Rows</label>
         <select id="limit">
           <option>50</option>
-          <option selected>100</option>
+          <option>100</option>
           <option>200</option>
-          <option>500</option>
+          <option selected>500</option>
         </select>
       </div>
       <button id="calc">Calculate</button>
       <span id="status" class="loading">Idle</span>
     </div>
     <div class="note">
-      Cross per day is determined by comparing the 4h‑computed RSI sampled at the last closed 4h bar of that day to the sample of the prior day (TV-style on a D1 chart with “Timeframe = 4 hours” and “Wait for timeframe closes”).
+      Cross per day is determined by comparing the 4h‑computed RSI (Wilder) sampled at the last closed 4h bar of that day to the sample of the prior day (TV-style on a D1 chart with Timeframe=4h and “Wait for timeframe closes”).
     </div>
   </div>
 
@@ -149,46 +149,44 @@
       ctx.stroke();
     }
 
-    // RSI (simple average), source: close
-    function rsiAt(closes, endIndexExclusive, period = 14) {
-      if (!closes || endIndexExclusive < period + 1) return null;
-      const recent = closes.slice(endIndexExclusive - (period + 1), endIndexExclusive);
-      let gains = 0, losses = 0;
-      for (let i = 0; i < period; i++) {
-        const diff = recent[i+1] - recent[i];
-        if (diff > 0) gains += diff; else losses -= diff;
-      }
-      const avgGain = gains / period;
-      const avgLoss = losses / period;
-      if (avgLoss === 0 && avgGain === 0) return 50;
-      if (avgLoss === 0) return 100;
-      const rs = avgGain / avgLoss;
-      return 100 - (100 / (1 + rs));
-    }
-
-    function rsiSeries(closes, period = 14) {
+    // Wilder's RSI (source: close)
+    function rsiSeriesWilder(closes, period = 14) {
       const N = closes.length;
       const out = new Array(N).fill(null);
       if (N < period + 1) return out;
-      const diffs = new Array(N - 1);
-      for (let i = 0; i < N - 1; i++) diffs[i] = closes[i+1] - closes[i];
-      let g = 0, l = 0;
-      for (let k = 0; k < period; k++) {
-        const d = diffs[k];
-        if (d > 0) g += d; else l -= d;
+
+      const gains = new Array(N - 1);
+      const losses = new Array(N - 1);
+      for (let i = 0; i < N - 1; i++) {
+        const d = closes[i+1] - closes[i];
+        gains[i] = d > 0 ? d : 0;
+        losses[i] = d < 0 ? -d : 0;
       }
-      const setRsi = (j) => {
-        const avgG = g / period, avgL = l / period;
-        out[j] = avgL === 0 && avgG === 0 ? 50 : (avgL === 0 ? 100 : (100 - (100 / (1 + (avgG / avgL)))));
-      };
-      setRsi(period);
-      for (let j = period + 1; j < N; j++) {
-        const oldD = diffs[j - period - 1];
-        const newD = diffs[j - 1];
-        if (oldD > 0) g -= oldD; else l += oldD;
-        if (newD > 0) g += newD; else l -= newD;
-        setRsi(j);
+
+      // Initial averages
+      let avgGain = 0, avgLoss = 0;
+      for (let i = 0; i < period; i++) {
+        avgGain += gains[i];
+        avgLoss += losses[i];
       }
+      avgGain /= period;
+      avgLoss /= period;
+
+      // First RSI value at index = period
+      out[period] = avgLoss === 0
+        ? (avgGain === 0 ? 50 : 100)
+        : 100 - (100 / (1 + (avgGain / avgLoss)));
+
+      // Wilder smoothing
+      for (let i = period; i < gains.length; i++) {
+        avgGain = (avgGain * (period - 1) + gains[i]) / period;
+        avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
+        const idx = i + 1; // RSI aligns to close index
+        out[idx] = avgLoss === 0
+          ? (avgGain === 0 ? 50 : 100)
+          : 100 - (100 / (1 + (avgGain / avgLoss)));
+      }
+
       return out;
     }
 
@@ -248,7 +246,7 @@
       };
     }
 
-    async function getKlines(symbol, interval="1d", limit=220) {
+    async function getKlines(symbol, interval="1d", limit=260) {
       const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
       const rows = await fetchJson(url);
       return rows.map(r => ({
@@ -286,7 +284,6 @@
     }
 
     function renderPills(crosses) {
-      // crosses: array of strings like "up30", "down50", etc. or empty
       if (!crosses || crosses.length === 0) return "<span class='pill'>—</span>";
       const parts = crosses.map(c => {
         const dir = c.startsWith("up") ? "up" : "down";
@@ -337,7 +334,7 @@
       const results = await pool(candidates, 5, async s => {
         const [d1, h4] = await Promise.all([
           getKlines(s.symbol, "1d", 260),
-          getKlines(s.symbol, "4h", 800)
+          getKlines(s.symbol, "4h", 900)
         ]);
         return { s, d1, h4 };
       });
@@ -346,40 +343,36 @@
       for (const item of results) {
         if (!item || item.error) continue;
         const d1 = item.d1, h4 = item.h4;
-        if (!d1 || d1.length < period + 10 || !h4 || h4.length < period + 50) continue;
+        if (!d1 || d1.length < period + 6 || !h4 || h4.length < period + 50) continue;
 
-        // Identify last 5 closed daily bars to form 5 samples (needed for 4 crosses)
+        // Last five closed daily bars: D-4..D-0 to get 4 comparisons
         const nD = d1.length;
-        const last = d1[nD - 1];           // D-0
-        const d1m1 = d1[nD - 2];           // D-1
-        const d1m2 = d1[nD - 3];           // D-2
-        const d1m3 = d1[nD - 4];           // D-3
-        const d1m4 = d1[nD - 5];           // D-4 (for previous sample)
-        if (!d1m4) continue;
+        const D0 = d1[nD - 1], D1 = d1[nD - 2], D2 = d1[nD - 3], D3 = d1[nD - 4], D4 = d1[nD - 5];
+        if (!D4) continue;
 
-        // D1 RSI for display at D-0 (last closed day)
+        // D1 RSI (Wilder) at D0 for display
         const closesD1 = d1.map(k => k.close);
-        const rsiD1 = rsiAt(closesD1, closesD1.length, period);
+        const rsiD1Series = rsiSeriesWilder(closesD1, period);
+        const rsiD1 = rsiD1Series[rsiD1Series.length - 1];
 
-        // 4h RSI series for sampling
+        // 4h RSI (Wilder) series for sampling
         const closesH4 = h4.map(k => k.close);
-        const rsiH4 = rsiSeries(closesH4, period);
+        const rsiH4 = rsiSeriesWilder(closesH4, period);
 
-        // Sample indices: last 4h close at or before each daily close time
-        const idxD4 = lastIndexAtOrBefore(h4, d1m4.closeTime);
-        const idxD3 = lastIndexAtOrBefore(h4, d1m3.closeTime);
-        const idxD2 = lastIndexAtOrBefore(h4, d1m2.closeTime);
-        const idxD1 = lastIndexAtOrBefore(h4, d1m1.closeTime);
-        const idxD0 = lastIndexAtOrBefore(h4, last.closeTime);
-        if ([idxD4,idxD3,idxD2,idxD1,idxD0].some(i => i < 0)) continue;
+        // Sample the last closed 4h <= daily close
+        const iD4 = lastIndexAtOrBefore(h4, D4.closeTime);
+        const iD3 = lastIndexAtOrBefore(h4, D3.closeTime);
+        const iD2 = lastIndexAtOrBefore(h4, D2.closeTime);
+        const iD1 = lastIndexAtOrBefore(h4, D1.closeTime);
+        const iD0 = lastIndexAtOrBefore(h4, D0.closeTime);
+        if ([iD4,iD3,iD2,iD1,iD0].some(i => i < 0)) continue;
 
-        const sD4 = rsiH4[idxD4];
-        const sD3 = rsiH4[idxD3];
-        const sD2 = rsiH4[idxD2];
-        const sD1 = rsiH4[idxD1];
-        const sD0 = rsiH4[idxD0];
+        const sD4 = rsiH4[iD4];
+        const sD3 = rsiH4[iD3];
+        const sD2 = rsiH4[iD2];
+        const sD1 = rsiH4[iD1];
+        const sD0 = rsiH4[iD0];
 
-        // Compute crosses between consecutive samples (D-3 uses D-4→D-3, etc.)
         function crosses(prev, curr) {
           const out = [];
           const c30 = crossDir(prev, curr, 30);
@@ -395,7 +388,6 @@
         const cD1 = crosses(sD2, sD1);
         const cD0 = crosses(sD1, sD0);
 
-        // Optional level filter logic for "onlyCrosses"
         const matchesLevel = (arr) => {
           if (!arr || arr.length === 0) return false;
           if (levelFilter === "any") return true;
@@ -407,16 +399,16 @@
         const mcapVal = cg ? cg.market_cap : null;
         const chg = cg && typeof cg.price_change_percentage_24h === "number"
           ? cg.price_change_percentage_24h
-          : ((last.close - d1m1.close) / d1m1.close) * 100;
+          : ((D0.close - D1.close) / D1.close) * 100;
 
         const row = {
           symbol: item.s.symbol,
           base: item.s.base,
           rsi: rsiD1,
-          close: last.close,
+          close: D0.close,
           chg,
           mcap: mcapVal,
-          time: last.closeTime,
+          time: D0.closeTime,
           spark: closesD1.slice(-30),
           D3: cD3, D2: cD2, D1: cD1, D0: cD0,
           anyMatch
@@ -425,12 +417,11 @@
         if (!onlyCrossesEl.checked || anyMatch) rows.push(row);
       }
 
-      // Sort: default by RSI descending
       applySort(rows);
       const limited = rows.slice(0, maxRows);
 
-      const tbody = document.querySelector("#tbl tbody");
-      tbody.innerHTML = "";
+      const tbodyEl = document.querySelector("#tbl tbody");
+      tbodyEl.innerHTML = "";
       for (const r of limited) {
         const tr = document.createElement("tr");
         const tvSym = `${r.base}USDT.P`;
@@ -457,12 +448,12 @@
           <td>${renderPills(r.D0)}</td>
           <td><canvas class="spark"></canvas></td>
         `;
-        tbody.appendChild(tr);
+        tbodyEl.appendChild(tr);
         drawSpark(tr.querySelector("canvas"), r.spark);
       }
 
       document.getElementById("count").textContent =
-        `Showing ${limited.length} of ${rows.length} matches (scanned ${candidates.length}). RSI(14) calc on 4h, sampled on D1.`;
+        `Showing ${limited.length} of ${rows.length} matches (scanned ${candidates.length}). RSI(14) on 4h (Wilder), sampled at daily boundary.`;
       status.textContent = `Done at ${utcDateTime(Date.now())}`;
     }
 
